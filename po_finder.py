@@ -6,6 +6,7 @@ import threading
 import xml.etree.ElementTree as ET
 import pandas as pd
 from collections import defaultdict
+from typing import List, Optional, Tuple, Set
 
 # ── Namespaces common in Mexican CFDI XMLs ──────────────────────────────────
 CFDI_NS = {
@@ -24,7 +25,7 @@ RED      = "#f28b82"
 BTN_FG   = "#ffffff"
 
 
-def read_po_numbers(filepath: str, column: str) -> list[str]:
+def read_po_numbers(filepath: str, column: str) -> List[str]:
     ext = os.path.splitext(filepath)[1].lower()
     if ext in (".xls", ".xlsx"):
         df = pd.read_excel(filepath, dtype=str)
@@ -38,7 +39,7 @@ def read_po_numbers(filepath: str, column: str) -> list[str]:
     return df[column].dropna().str.strip().unique().tolist()
 
 
-def search_xml_for_po(xml_path: str, po_numbers: set[str]) -> tuple[str | None, str | None, str | None]:
+def search_xml_for_po(xml_path: str, po_numbers: Set[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Return (po_found, rfc, empresa) or (None, None, None)."""
     try:
         tree = ET.parse(xml_path)
@@ -90,7 +91,8 @@ class App(tk.Tk):
         self.xml_dir     = tk.StringVar()
         self.dest_dir    = tk.StringVar()
         self.po_column   = tk.StringVar()
-        self.available_columns: list[str] = []
+        self.copy_mode   = tk.StringVar(value="flat")   # "flat" or "structure"
+        self.available_columns: List[str] = []
 
         self._build_ui()
 
@@ -108,6 +110,7 @@ class App(tk.Tk):
         self._file_row(frame, "📁  Destination folder",
                        self.dest_dir, self._browse_dest_dir, row=3, is_dir=True)
 
+        self._copy_mode_selector(frame, row=4)
         self._run_button(frame)
         self._log_area(frame)
 
@@ -153,6 +156,23 @@ class App(tk.Tk):
                   bg=ACCENT2, fg="#000000", relief="flat",
                   font=("Segoe UI", 9, "bold"), padx=10, cursor="hand2"
                   ).grid(row=0, column=1, padx=(6, 0))
+
+    def _copy_mode_selector(self, parent, row):
+        tk.Label(parent, text="📋  Destination structure", bg=BG, fg=SUBTEXT,
+                 font=("Segoe UI", 9)).grid(row=row*3, column=0, columnspan=3,
+                                              sticky="w", pady=(12, 0))
+        inner = tk.Frame(parent, bg=BG)
+        inner.grid(row=row*3+1, column=0, columnspan=3, sticky="w")
+        tk.Radiobutton(inner, text="Flat — all XMLs in one folder",
+                       variable=self.copy_mode, value="flat",
+                       bg=BG, fg=TEXT, selectcolor=CARD,
+                       activebackground=BG, activeforeground=ACCENT2,
+                       font=("Segoe UI", 10)).pack(side="left", padx=(0, 20))
+        tk.Radiobutton(inner, text="Keep folder structure",
+                       variable=self.copy_mode, value="structure",
+                       bg=BG, fg=TEXT, selectcolor=CARD,
+                       activebackground=BG, activeforeground=ACCENT2,
+                       font=("Segoe UI", 10)).pack(side="left")
 
     def _run_button(self, parent):
         tk.Button(parent, text="▶  Run — Find & Copy XMLs",
@@ -260,13 +280,17 @@ class App(tk.Tk):
             self._log(f"✘  Error reading data file: {e}", RED)
             return
 
-        # 2. Scan XML files
-        xml_files = [f for f in os.listdir(self.xml_dir.get())
-                     if f.lower().endswith(".xml")]
+        # 2. Scan XML files recursively through all subfolders
+        xml_files = []
+        for dirpath, _, filenames in os.walk(self.xml_dir.get()):
+            for f in filenames:
+                if f.lower().endswith(".xml"):
+                    xml_files.append(os.path.join(dirpath, f))
+
         if not xml_files:
-            self._log("✘  No XML files found in selected folder.", RED)
+            self._log("✘  No XML files found in selected folder or subfolders.", RED)
             return
-        self._log(f"✔  XML files found: {len(xml_files)}", ACCENT2)
+        self._log(f"✔  XML files found (all subfolders): {len(xml_files)}", ACCENT2)
 
         os.makedirs(self.dest_dir.get(), exist_ok=True)
 
@@ -275,22 +299,31 @@ class App(tk.Tk):
 
         copied        = 0
         not_found_pos = set(po_set.copy())
-        rfc_empresa   = defaultdict(set)  # rfc → set of empresa names
-        po_to_files   = defaultdict(list) # po → list of xml filenames
+        rfc_empresa   = defaultdict(set)
+        po_to_files   = defaultdict(list)
+        xml_root      = self.xml_dir.get()
 
-        for i, fname in enumerate(xml_files):
-            full_path = os.path.join(self.xml_dir.get(), fname)
+        for i, full_path in enumerate(xml_files):
+            fname = os.path.basename(full_path)
             matched_po, rfc, empresa = search_xml_for_po(full_path, po_set)
 
             if matched_po:
-                dest_path = os.path.join(self.dest_dir.get(), fname)
+                if self.copy_mode.get() == "structure":
+                    # Recreate relative subfolder path inside destination
+                    rel_path  = os.path.relpath(full_path, xml_root)
+                    dest_path = os.path.join(self.dest_dir.get(), rel_path)
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                else:
+                    dest_path = os.path.join(self.dest_dir.get(), fname)
+
                 shutil.copy2(full_path, dest_path)
                 copied += 1
                 not_found_pos.discard(matched_po)
                 po_to_files[matched_po].append(fname)
                 if rfc:
                     rfc_empresa[rfc].add(empresa or "—")
-                self._log(f"  ✔  {fname}  →  PO: {matched_po}", ACCENT2)
+                rel_display = os.path.relpath(full_path, xml_root)
+                self._log(f"  ✔  {rel_display}  →  PO: {matched_po}", ACCENT2)
 
             self.progress["value"] = i + 1
             self.update_idletasks()
