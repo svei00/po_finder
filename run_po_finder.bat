@@ -27,4 +27,4 @@ IF %ERRORLEVEL% NEQ 0 (
 
 :: ── Launch app ────────────────────────────────────────────────────────────────
 echo Launching PO XML Finder...
-start "" pythonw "%~dp0po_xml_finder.py"
+start "" pythonw "%~dp0po_finder.py"

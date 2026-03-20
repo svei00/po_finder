@@ -35,7 +35,7 @@ else
     if command -v nohup &>/dev/null; then
         nohup $PYTHON "$SCRIPT_DIR/po_xml_finder.py" >/dev/null 2>&1 &
     else
-        $PYTHON "$SCRIPT_DIR/po_xml_finder.py" &
+        $PYTHON "$SCRIPT_DIR/po_finder.py" &
     fi
 fi
 
