@@ -25,10 +25,14 @@ BTN_FG  = "#ffffff"
 
 HEADERS = [
     "Fecha", "PO", "Serie", "Folio",
+    "UUID", "UUID Relacionado",
     "RFC Receptor", "Nombre / Denominacion Social",
     "Subtotal", "Descuento", "IVA", "Total",
     "Concepto"
 ]
+
+# Timbre Fiscal Digital namespace
+TFD_NS = "http://www.sat.gob.mx/TimbreFiscalDigital"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +129,24 @@ def extract_invoice_data(xml_path, matched_pos):
                     pass
         row["IVA"] = f"{iva_total:.2f}" if iva_total else "0.00"
 
+        # ── UUID from Timbre Fiscal Digital ──────────────────────────────────
+        tfd = root.find(f"{{{TFD_NS}}}TimbreFiscalDigital")
+        if tfd is None:
+            tfd = root.find(f".//{{{TFD_NS}}}TimbreFiscalDigital")
+        row["UUID"] = _get(tfd, "UUID", "uuid") if tfd is not None else ""
+
+        # ── UUID Relacionado ──────────────────────────────────────────────────
+        uuid_rels = []
+        for ns in [CFDI_NS, CFDI3_NS]:
+            relacionados = root.findall(f".//{{{ns}}}CfdiRelacionado")
+            for rel in relacionados:
+                u = _get(rel, "UUID", "uuid")
+                if u:
+                    uuid_rels.append(u)
+            if uuid_rels:
+                break
+        row["UUID Relacionado"] = " | ".join(uuid_rels)
+
         # ── Conceptos – join all descriptions ─────────────────────────────────
         conceptos, _ = _find_all_nodes(root, "Concepto")
         descrips = []
@@ -194,7 +216,7 @@ def generate_xlsx(rows, xlsx_path):
     date_fmt    = 'YYYY-MM-DD HH:MM:SS'
 
     # Column widths (chars)
-    col_widths = [20, 18, 8, 10, 16, 36, 14, 12, 14, 14, 60]
+    col_widths = [20, 18, 8, 10, 38, 38, 16, 36, 14, 12, 14, 14, 60]
 
     # ── Header row ────────────────────────────────────────────────────────────
     ws.row_dimensions[1].height = 28
