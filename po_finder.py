@@ -190,7 +190,7 @@ def search_xml_for_po(xml_path, po_numbers):
         return [], None, None, None, None
 
 
-def generate_xlsx(rows, xlsx_path):
+def generate_xlsx(rows, xlsx_path, not_found_pos=None):
     """Write the invoice report rows to an XLSX file with formatting."""
     from openpyxl import Workbook
     from openpyxl.styles import (Font, PatternFill, Alignment,
@@ -201,16 +201,21 @@ def generate_xlsx(rows, xlsx_path):
     ws = wb.active
     ws.title = "Facturas"
 
-    # ── Style definitions ─────────────────────────────────────────────────────
+    # ── Style definitions — confirmed brand palette ──────────────────────────
+    # Header:  #D2691E orange contrast  |  Odd: #FFFFFF white  |  Even: #D6E8FA dimmed blue
+    # Totals:  #21B868 brand green      |  Border: #B38E5D warm gold
     hdr_font    = Font(name="Arial", bold=True, color="FFFFFF", size=10)
-    hdr_fill    = PatternFill("solid", fgColor="7C6AF7")        # ACCENT purple
+    hdr_fill    = PatternFill("solid", fgColor="D2691E")        # contrast orange
     hdr_align   = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    even_fill   = PatternFill("solid", fgColor="2A2A3E")
-    odd_fill    = PatternFill("solid", fgColor="1E1E2E")
-    cell_font   = Font(name="Arial", size=9, color="E0E0F0")
+    odd_fill    = PatternFill("solid", fgColor="FFFFFF")        # clean white
+    even_fill   = PatternFill("solid", fgColor="D6E8FA")        # dimmed brand blue stripe
+    cell_font   = Font(name="Arial", size=9, color="1F2937")    # dark charcoal
     cell_align  = Alignment(vertical="top", wrap_text=True)
-    border_side = Side(style="thin", color="3A3A5E")
+    border_side = Side(style="thin", color="B38E5D")            # warm gold border
     thin_border = Border(bottom=border_side)
+    # Missing PO rows
+    missing_fill = PatternFill("solid", fgColor="FADADD")       # light salmon
+    missing_font = Font(name="Arial", size=9, color="8B0000", italic=True)
 
     money_fmt   = '#,##0.00'
     date_fmt    = 'YYYY-MM-DD HH:MM:SS'
@@ -258,13 +263,19 @@ def generate_xlsx(rows, xlsx_path):
 
     # ── Totals row ────────────────────────────────────────────────────────────
     total_row = len(rows) + 2
-    total_fill = PatternFill("solid", fgColor="5DD6B5")
-    total_font = Font(name="Arial", bold=True, size=9, color="000000")
+    total_fill = PatternFill("solid", fgColor="21B868")        # brand green
+    total_font = Font(name="Arial", bold=True, size=9, color="FFFFFF")
     total_align = Alignment(horizontal="right", vertical="center")
 
-    ws.cell(row=total_row, column=1, value="TOTAL").font  = total_font
-    ws.cell(row=total_row, column=1).fill   = total_fill
-    ws.cell(row=total_row, column=1).alignment = total_align
+    total_label = ws.cell(row=total_row, column=1, value="TOTAL")
+    total_label.font      = total_font
+    total_label.fill      = total_fill
+    total_label.alignment = total_align
+    # Fill non-money cells in totals row with green too
+    for _c in range(2, len(HEADERS) + 1):
+        _cell = ws.cell(row=total_row, column=_c)
+        if _cell.value is None:
+            _cell.fill = total_fill
 
     for col_idx, header in enumerate(HEADERS, start=1):
         if header in money_cols:
@@ -279,6 +290,30 @@ def generate_xlsx(rows, xlsx_path):
             formula_cell.alignment     = Alignment(horizontal="right", vertical="center")
 
     ws.row_dimensions[total_row].height = 22
+
+    # ── Missing POs block ────────────────────────────────────────────────────
+    if not_found_pos:
+        # Spacer row
+        spacer_row = total_row + 2
+        ws.cell(row=spacer_row, column=1,
+                value="PURCHASE ORDERS NOT FOUND IN ANY XML:").font = Font(
+                    name="Arial", bold=True, size=9, color="8B0000")
+
+        for mi, po in enumerate(sorted(not_found_pos), start=1):
+            mr = spacer_row + mi
+            for col_idx, header in enumerate(HEADERS, start=1):
+                if header == "PO":
+                    val = po
+                elif header == "Concepto":
+                    val = "--- NOT FOUND IN XML ---"
+                else:
+                    val = ""
+                mc = ws.cell(row=mr, column=col_idx, value=val)
+                mc.fill      = missing_fill
+                mc.font      = missing_font
+                mc.alignment = cell_align
+                mc.border    = thin_border
+        ws.row_dimensions[spacer_row].height = 16
 
     wb.save(xlsx_path)
 
@@ -607,7 +642,7 @@ class App(tk.Tk):
         xlsx_msg = ""
         if generate_report and report_rows:
             try:
-                generate_xlsx(report_rows, xlsx_path)
+                generate_xlsx(report_rows, xlsx_path, not_found_pos)
                 self._log(f"XLSX saved: {xlsx_path}", ACCENT2)
                 xlsx_msg = f"\n\nXLSX Report: reporte_facturas.xlsx\n({len(report_rows)} invoices)"
             except Exception as e:
